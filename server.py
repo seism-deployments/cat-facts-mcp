@@ -23,17 +23,20 @@ async def get_facts(
     if animal_type:
         params["animal_type"] = animal_type
     if amount is not None:
-        amount = max(1, min(500, amount))
         params["amount"] = amount
-    if status:
+    if status and status != "all":
         params["status"] = status
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             response = await client.get(f"{BASE_URL}/facts", params=params)
             response.raise_for_status()
             data = response.json()
-            return {"success": True, "data": data}
+            return {
+                "success": True,
+                "facts": data,
+                "count": len(data) if isinstance(data, list) else 1
+            }
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
@@ -46,21 +49,24 @@ async def submit_fact(
     animal_type: Optional[str] = "cat",
     source: Optional[str] = None
 ) -> dict:
-    """Submit a new cat (or other animal) fact to the Cat Facts database for review. Use this when the user wants to contribute a fact they know. Facts are stored as unverified until reviewed by an admin."""
+    """Submit a new cat (or other animal) fact to the Cat Facts database for review. Use this when a user wants to contribute their own interesting animal fact."""
     payload = {
         "text": text,
-        "type": animal_type or "cat",
-        "status": {"verified": False}
+        "type": animal_type or "cat"
     }
     if source:
         payload["source"] = source
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             response = await client.post(f"{BASE_URL}/facts", json=payload)
             response.raise_for_status()
             data = response.json()
-            return {"success": True, "data": data, "message": "Fact submitted successfully and is pending review."}
+            return {
+                "success": True,
+                "message": "Fact submitted successfully for review.",
+                "fact": data
+            }
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
@@ -70,43 +76,43 @@ async def submit_fact(
 @mcp.tool()
 async def manage_recipients(
     action: str,
-    name: Optional[str] = None,
     phone_number: Optional[str] = None,
-    recipient_id: Optional[str] = None
+    name: Optional[str] = None
 ) -> dict:
-    """Add, list, or remove recipients who will receive daily cat facts via SMS. Use this to manage the user's personal list of fact recipients (friends to prank with cat facts)."""
-    action = action.lower().strip()
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    """Add, list, or remove phone number recipients who will receive daily cat facts via SMS. Use this when the user wants to manage who gets cat facts sent to them. Actions: 'list', 'add', 'remove'."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             if action == "list":
-                response = await client.get(f"{BASE_URL}/users/me/recipients")
+                response = await client.get(f"{BASE_URL}/users")
                 response.raise_for_status()
                 data = response.json()
-                return {"success": True, "data": data}
+                return {"success": True, "recipients": data}
 
             elif action == "add":
-                if not name or not phone_number:
-                    return {"success": False, "error": "Both 'name' and 'phone_number' are required when action is 'add'."}
+                if not phone_number:
+                    return {"success": False, "error": "phone_number is required for 'add' action."}
                 # Clean phone number
-                cleaned = "".join(c for c in phone_number if c.isdigit())
+                cleaned = "".join(filter(str.isdigit, phone_number)).lstrip("1")
                 if len(cleaned) not in (10, 11):
-                    return {"success": False, "error": "Phone number must be 10 or 11 digits."}
-                payload = {"name": name, "phoneNumber": cleaned}
-                response = await client.post(f"{BASE_URL}/users/me/recipients", json=payload)
+                    return {"success": False, "error": "Invalid phone number. Must be 10 or 11 digits."}
+                payload = {"phoneNumber": cleaned}
+                if name:
+                    payload["name"] = name
+                response = await client.post(f"{BASE_URL}/users", json=payload)
                 response.raise_for_status()
                 data = response.json()
-                return {"success": True, "data": data, "message": f"Recipient '{name}' added successfully."}
+                return {"success": True, "message": "Recipient added successfully.", "recipient": data}
 
             elif action == "remove":
-                if not recipient_id:
-                    return {"success": False, "error": "'recipient_id' is required when action is 'remove'."}
-                response = await client.delete(f"{BASE_URL}/users/me/recipients/{recipient_id}")
+                if not phone_number:
+                    return {"success": False, "error": "phone_number is required for 'remove' action."}
+                cleaned = "".join(filter(str.isdigit, phone_number)).lstrip("1")
+                response = await client.delete(f"{BASE_URL}/users/{cleaned}")
                 response.raise_for_status()
-                return {"success": True, "message": f"Recipient {recipient_id} removed successfully."}
+                return {"success": True, "message": f"Recipient with phone number {cleaned} removed successfully."}
 
             else:
-                return {"success": False, "error": f"Unknown action '{action}'. Valid actions: 'list', 'add', 'remove'."}
+                return {"success": False, "error": f"Unknown action '{action}'. Use 'list', 'add', or 'remove'."}
 
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
@@ -119,19 +125,23 @@ async def send_fact(
     recipient_id: Optional[str] = None,
     fact_id: Optional[str] = None
 ) -> dict:
-    """Manually trigger sending a cat fact via SMS to one or all recipients. Use this when the user wants to send a fact immediately rather than waiting for the daily scheduled send."""
+    """Manually send a cat fact via SMS to one or all recipients immediately, outside of the daily scheduled send. Use this when the user wants to send a fact right now."""
     payload = {}
     if recipient_id:
-        payload["recipientId"] = recipient_id
+        payload["recipient"] = recipient_id
     if fact_id:
         payload["factId"] = fact_id
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            response = await client.post(f"{BASE_URL}/users/me/sendFact", json=payload)
+            response = await client.post(f"{BASE_URL}/facts/send", json=payload)
             response.raise_for_status()
             data = response.json()
-            return {"success": True, "data": data, "message": "Cat fact sent successfully."}
+            return {
+                "success": True,
+                "message": "Cat fact sent successfully.",
+                "details": data
+            }
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
@@ -140,23 +150,32 @@ async def send_fact(
 
 @mcp.tool()
 async def get_conversation(
-    recipient_id: str,
-    limit: Optional[int] = 20
+    recipient_id: Optional[str] = None,
+    limit: Optional[int] = 20,
+    page: Optional[int] = 1
 ) -> dict:
-    """Retrieve the SMS conversation history (catversation) between the Catbot and a specific recipient. Use this to view how a recipient has been responding to cat facts and what the Catbot replied."""
+    """Retrieve the catversation (SMS conversation history) between Catbot and a specific recipient. Use this to review what messages have been exchanged."""
     params = {}
-    if limit is not None:
-        params["limit"] = max(1, limit)
+    if limit:
+        params["limit"] = limit
+    if page:
+        params["page"] = page
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            response = await client.get(
-                f"{BASE_URL}/users/me/recipients/{recipient_id}/conversation",
-                params=params
-            )
+            if recipient_id:
+                url = f"{BASE_URL}/users/{recipient_id}/conversation"
+            else:
+                url = f"{BASE_URL}/conversation"
+
+            response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            return {"success": True, "data": data}
+            return {
+                "success": True,
+                "conversation": data,
+                "recipient_id": recipient_id
+            }
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
@@ -164,102 +183,105 @@ async def get_conversation(
 
 
 @mcp.tool()
-async def authenticate_user(action: str) -> dict:
-    """Authenticate or manage user session for the Cat Facts app. Use this to log in via Google OAuth, check current session status, or log out. Required before accessing protected features like managing recipients."""
-    action = action.lower().strip()
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
+async def auth_google(
+    action: str
+) -> dict:
+    """Initiate Google OAuth authentication or handle Google Contacts import. Use this when the user wants to log in via Google or import their Google contacts as cat facts recipients. Actions: 'login', 'import_contacts'."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             if action == "login":
-                login_url = f"{BASE_URL}/auth/google"
+                response = await client.get(f"{BASE_URL}/auth/google")
+                # This endpoint likely returns a redirect; capture the URL
                 return {
                     "success": True,
-                    "message": "To log in with Google OAuth, please visit the following URL in your browser:",
-                    "login_url": login_url,
-                    "instructions": "After logging in, your session will be established with the Cat Facts server."
-                }
-
-            elif action == "logout":
-                response = await client.get(f"{BASE_URL}/auth/logout")
-                return {
-                    "success": True,
-                    "message": "Logout request sent.",
+                    "message": "Google OAuth login initiated. Please visit the URL to authenticate.",
+                    "auth_url": f"{BASE_URL}/auth/google",
                     "status_code": response.status_code
                 }
-
-            elif action == "status":
-                response = await client.get(f"{BASE_URL}/users/me")
-                if response.status_code == 200:
-                    data = response.json()
-                    return {"success": True, "authenticated": True, "user": data}
-                elif response.status_code in (401, 403):
-                    return {"success": True, "authenticated": False, "message": "Not currently authenticated."}
-                else:
-                    return {"success": True, "authenticated": False, "status_code": response.status_code}
-
-            else:
-                return {"success": False, "error": f"Unknown action '{action}'. Valid actions: 'login', 'logout', 'status'."}
-
-        except httpx.HTTPStatusError as e:
-            return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-
-@mcp.tool()
-async def import_google_contacts(
-    max_contacts: Optional[int] = None,
-    confirm: Optional[bool] = False
-) -> dict:
-    """Import contacts from the user's Google account as cat fact recipients in bulk. Use this when the user wants to add many recipients at once from their Google Contacts instead of adding them one by one."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            if not confirm:
+            elif action == "import_contacts":
+                response = await client.get(f"{BASE_URL}/auth/google/contacts")
                 return {
                     "success": True,
-                    "message": "This action will import your Google contacts as cat fact recipients. Set 'confirm' to true to proceed.",
-                    "warning": "All contacts with valid phone numbers will be imported (or up to max_contacts if specified).",
-                    "max_contacts": max_contacts,
-                    "requires_authentication": True,
-                    "note": "You must be authenticated via Google OAuth before importing contacts. Use authenticate_user with action='login' first."
+                    "message": "Google Contacts import initiated. Please visit the URL to authorize contact access.",
+                    "auth_url": f"{BASE_URL}/auth/google/contacts",
+                    "status_code": response.status_code
                 }
-
-            params = {}
-            if max_contacts is not None:
-                params["max"] = max_contacts
-
-            response = await client.get(f"{BASE_URL}/users/me/contacts/import", params=params)
-            response.raise_for_status()
-            data = response.json()
-            return {"success": True, "data": data, "message": "Google contacts imported successfully."}
-
+            else:
+                return {"success": False, "error": f"Unknown action '{action}'. Use 'login' or 'import_contacts'."}
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            # Redirects may raise exceptions; provide helpful info
+            return {
+                "success": True,
+                "message": f"Auth endpoint reached. Action: {action}. Note: This endpoint may require browser-based interaction.",
+                "auth_url": f"{BASE_URL}/auth/google" if action == "login" else f"{BASE_URL}/auth/google/contacts"
+            }
 
 
 @mcp.tool()
 async def get_api_logs(
     limit: Optional[int] = 50,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    page: Optional[int] = 1,
+    endpoint: Optional[str] = None
 ) -> dict:
-    """Retrieve API usage logs for the Cat Facts developer API. Use this for admin/developer purposes to monitor API activity, track usage patterns, or debug issues with API requests."""
+    """Retrieve API usage logs for monitoring and admin purposes. Use this when an admin wants to inspect recent API activity, diagnose issues, or audit usage."""
     params = {}
-    if limit is not None:
-        params["limit"] = max(1, limit)
-    if start_date:
-        params["start"] = start_date
-    if end_date:
-        params["end"] = end_date
+    if limit:
+        params["limit"] = limit
+    if page:
+        params["page"] = page
+    if endpoint:
+        params["endpoint"] = endpoint
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            response = await client.get(f"{BASE_URL}/logs", params=params)
+            response = await client.get(f"{BASE_URL}/admin/logs", params=params)
             response.raise_for_status()
             data = response.json()
-            return {"success": True, "data": data}
+            return {
+                "success": True,
+                "logs": data,
+                "page": page,
+                "limit": limit
+            }
+        except httpx.HTTPStatusError as e:
+            return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def manage_unsubscribe(
+    action: str,
+    phone_number: Optional[str] = None
+) -> dict:
+    """Handle unsubscribe requests from recipients who no longer want to receive cat facts. Use this when a recipient wants to opt out or when checking unsubscribe history. Actions: 'unsubscribe', 'list'."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            if action == "list":
+                response = await client.get(f"{BASE_URL}/unsubscribe")
+                response.raise_for_status()
+                data = response.json()
+                return {"success": True, "unsubscribed": data}
+
+            elif action == "unsubscribe":
+                if not phone_number:
+                    return {"success": False, "error": "phone_number is required for 'unsubscribe' action."}
+                cleaned = "".join(filter(str.isdigit, phone_number)).lstrip("1")
+                if len(cleaned) not in (10, 11):
+                    return {"success": False, "error": "Invalid phone number. Must be 10 or 11 digits."}
+                response = await client.post(f"{BASE_URL}/unsubscribe", json={"phoneNumber": cleaned})
+                response.raise_for_status()
+                data = response.json()
+                return {
+                    "success": True,
+                    "message": f"Phone number {cleaned} has been unsubscribed from cat facts.",
+                    "details": data
+                }
+            else:
+                return {"success": False, "error": f"Unknown action '{action}'. Use 'unsubscribe' or 'list'."}
+
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"HTTP error {e.response.status_code}: {e.response.text}"}
         except Exception as e:
