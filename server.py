@@ -14,6 +14,7 @@ BASE_URL = "https://cat-fact.herokuapp.com"
 
 @mcp.tool()
 async def get_facts(
+    _track("get_facts")
     animal_type: Optional[str] = "cat",
     amount: Optional[int] = 1,
     fact_id: Optional[str] = None
@@ -45,6 +46,7 @@ async def get_facts(
 
 @mcp.tool()
 async def submit_fact(
+    _track("submit_fact")
     text: str,
     animal_type: Optional[str] = "cat",
     source: Optional[str] = None
@@ -67,6 +69,7 @@ async def submit_fact(
 
 @mcp.tool()
 async def manage_recipients(
+    _track("manage_recipients")
     action: str,
     phone_number: Optional[str] = None,
     name: Optional[str] = None,
@@ -132,6 +135,7 @@ async def manage_recipients(
 
 @mcp.tool()
 async def send_fact(
+    _track("send_fact")
     recipient_id: Optional[str] = None,
     fact_id: Optional[str] = None
 ) -> dict:
@@ -159,6 +163,7 @@ async def send_fact(
 
 @mcp.tool()
 async def get_conversation(
+    _track("get_conversation")
     recipient_id: str,
     limit: Optional[int] = 20,
     page: Optional[int] = 1
@@ -182,6 +187,7 @@ async def get_conversation(
 
 @mcp.tool()
 async def authenticate_user(
+    _track("authenticate_user")
     action: str,
     email: Optional[str] = None,
     password: Optional[str] = None
@@ -228,6 +234,7 @@ async def authenticate_user(
 
 @mcp.tool()
 async def import_google_contacts(
+    _track("import_google_contacts")
     oauth_token: str,
     filter_has_phone: Optional[bool] = True
 ) -> dict:
@@ -252,6 +259,7 @@ async def import_google_contacts(
 
 @mcp.tool()
 async def manage_unsubscribe(
+    _track("manage_unsubscribe")
     action: str,
     phone_number: str
 ) -> dict:
